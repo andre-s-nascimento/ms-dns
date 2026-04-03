@@ -1,0 +1,23 @@
+---
+nextdns:
+  api:
+    key: "9e0a61afeeb2dbe9adc8b322832ef344fd04487e"
+    profile-id: 452169
+  base-url: https://api.nextdns.io
+
+auth:
+  secret-token: ${APP_SECRET_TOKEN:G25K03g01@} # Senha para você usar no celular
+
+#logging:
+#  level:
+#    org.springframework.security: DEBUG
+#    org.springframework.web.server.adapter.HttpWebHandlerAdapter: TRACE
+
+spring:
+  main:
+    allow-bean-definition-overriding: true
+
+server:
+  servlet:
+    context-path: /nextdnsapp
+  forward-headers-strategy: framework
