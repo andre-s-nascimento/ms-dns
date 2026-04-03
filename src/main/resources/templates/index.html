@@ -13,6 +13,7 @@
         .card { background-color: #1e1e1e; border: 1px solid #333; }
         .btn-timer { background-color: #6f42c1; color: white; }
         .alert { border-radius: 8px; margin-bottom: 20px; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); }
+        .title {color: #fff;}
     </style>
     
 </head>
@@ -64,7 +65,7 @@
     </div>
 
     <div class="card p-4 shadow">
-        <h2 class="mb-4">Controle Parental</h2>
+        <h2 class="title mb-4">Controle Parental</h2>
 
         <div th:with="tokenValue=${param.token != null ? param.token[0] : ''}">
 
