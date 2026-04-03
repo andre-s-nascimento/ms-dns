@@ -25,6 +25,12 @@ fi
 echo "📦 Passo 1: Construindo imagem Docker..."
 docker build -t $IMAGE_NAME .
 
+# VERIFICAÇÃO DE SUCESSO:
+if [ $? -ne 0 ]; then
+    echo "❌ ERRO CRÍTICO: O build do Docker falhou. O deploy foi interrompido para evitar erros."
+    exit 1
+fi
+
 # 3. Limpeza de containers antigos
 echo "🛑 Passo 2: Removendo container anterior (se existir)..."
 docker rm -f $APP_NAME || true

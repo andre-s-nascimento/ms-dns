@@ -5,6 +5,7 @@ WORKDIR /app
 # Copia os arquivos de configuração do Gradle
 COPY gradlew .
 COPY gradle gradle
+RUN chmod +x gradlew
 COPY build.gradle .
 COPY settings.gradle .
 
