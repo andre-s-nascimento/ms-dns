@@ -26,8 +26,11 @@ COPY --from=build /app/build/libs/*.jar app.jar
 # Expõe a porta do Spring
 EXPOSE 8080
 
-# Variáveis de ambiente padrão (podem ser sobrescritas no OCI)
-ENV AUTH_SECRET_TOKEN=G25K03g01@
+# Declaramos as variáveis sem valores fixos
+# O Spring Boot lerá esses nomes do ambiente do sistema
+ENV APP_SECRET_TOKEN=""
+ENV NEXTDNS_API_KEY=""
+ENV NEXTDNS_PROFILE_ID=""
 ENV JAVA_OPTS="-Xms256m -Xmx512m"
 
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
