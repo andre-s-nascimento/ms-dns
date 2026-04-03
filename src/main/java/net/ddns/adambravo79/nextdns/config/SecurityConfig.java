@@ -1,61 +1,67 @@
 package net.ddns.adambravo79.nextdns.config;
 
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.slf4j.Slf4j; 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpStatus;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
-import org.springframework.security.config.web.server.SecurityWebFiltersOrder;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.web.server.SecurityWebFilterChain;
+import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatcher;
+import java.net.InetSocketAddress;
 
+@Slf4j // <-- Anotação que cria a variável 'log' automaticamente
 @Configuration
 @EnableWebFluxSecurity
-@Slf4j
+@Order(-1)
 public class SecurityConfig {
 
-    @Value("${auth.secret-token:G25@}")
+    @Value("${APP_SECRET_TOKEN:default_token}")
     private String secretToken;
 
     @Bean
     public SecurityWebFilterChain springSecurityFilterChain(ServerHttpSecurity http) {
         return http
-                .csrf(ServerHttpSecurity.CsrfSpec::disable)
-                .formLogin(ServerHttpSecurity.FormLoginSpec::disable)
-                .httpBasic(ServerHttpSecurity.HttpBasicSpec::disable)
-                .authorizeExchange(exchanges -> exchanges
-                        .pathMatchers("/favicon.ico", "/error").permitAll() // Libera caminhos críticos
-                        .anyExchange().permitAll()
-                )
-                // O FILTRO DA SENHA
-                // Dentro do seu SecurityWebFilterChain
-                .addFilterAt((exchange, chain) -> {
-                    String path = exchange.getRequest().getURI().getPath();
+            .csrf(csrf -> csrf.disable())
+            .authorizeExchange(exchanges -> exchanges
+                .matchers(tokenMatcher()).permitAll()
+                .anyExchange().denyAll()
+            )
+            .build();
+    }
 
-                    // Libera caminhos públicos
-                    if (path.equals("/favicon.ico") || path.equals("/error")) {
-                        return chain.filter(exchange);
-                    }
+    private ServerWebExchangeMatcher tokenMatcher() {
+        return exchange -> {
+            // 1. Captura o IP real (Proxy Aware)
+            String remoteIp = exchange.getRequest().getHeaders().getFirst("X-Forwarded-For");
+            if (remoteIp == null) {
+                InetSocketAddress addr = exchange.getRequest().getRemoteAddress();
+                remoteIp = (addr != null && addr.getAddress() != null) ? addr.getAddress().getHostAddress() : "Desconhecido";
+            }
 
-                    // Busca o token APENAS no Header ou na URL
-                    String tokenHeader = exchange.getRequest().getHeaders().getFirst("X-App-Token");
-                    String tokenParam = exchange.getRequest().getQueryParams().getFirst("token");
+            // 2. Captura os dados da requisição
+            String providedToken = exchange.getRequest().getQueryParams().getFirst("token");
+            String path = exchange.getRequest().getPath().value();
 
-                    String currentToken = (tokenHeader != null) ? tokenHeader : tokenParam;
+            // 3. LOGS ESTRUTURADOS com Slf4j
+            // {} são placeholders que evitam concatenação desnecessária de strings
+            log.info("Tentativa de acesso na rota: {}", path);
+            log.debug("IP do Cliente: {}", remoteIp);
+            
+            // Cuidado: Em produção, evite logar tokens reais. Aqui deixamos para o seu debug.
+            log.info("Token esperado: [{}] | Token recebido: [{}]", 
+                secretToken.trim(), 
+                (providedToken != null ? providedToken.trim() : "NULL"));
 
-                    if (secretToken.equals(currentToken)) {
-                        return chain.filter(exchange);
-                    }
+            // 4. Validação
+            if (providedToken != null && secretToken.trim().equals(providedToken.trim())) {
+                log.info("✅ ACESSO CONCEDIDO para IP: {}", remoteIp);
+                return ServerWebExchangeMatcher.MatchResult.match();
+            }
 
-                    // Se falhar a validação
-                    String ip = exchange.getRequest().getRemoteAddress() != null ?
-                            exchange.getRequest().getRemoteAddress().getAddress().getHostAddress() : "unknown";
-
-                    log.warn("BLOQUEADO: Token inválido ou ausente para {} no IP: [{}].", path, ip);
-                    exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
-                    return exchange.getResponse().setComplete();
-                }, SecurityWebFiltersOrder.FIRST)
-                .build();
+            log.warn("❌ ACESSO NEGADO: Token inválido ou ausente. IP: {}", remoteIp);
+            return ServerWebExchangeMatcher.MatchResult.notMatch();
+        };
     }
 }

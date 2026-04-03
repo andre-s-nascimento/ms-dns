@@ -1,4 +1,13 @@
 ---
+spring:
+  main:
+    allow-bean-definition-overriding: true
+  security:
+    user:
+      password: "" # Desativa a senha gerada
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.security.reactive.ReactiveUserDetailsServiceAutoConfiguration
+
 nextdns:
   api:
     # O Spring tenta ler a variável do sistema, se não existir, fica vazio (seguro)
@@ -15,10 +24,6 @@ auth:
 #  level:
 #    org.springframework.security: DEBUG
 #    org.springframework.web.server.adapter.HttpWebHandlerAdapter: TRACE
-
-spring:
-  main:
-    allow-bean-definition-overriding: true
 
 server:
   servlet:
