@@ -1,12 +1,15 @@
 ---
 nextdns:
   api:
-    key: "9e0a61afeeb2dbe9adc8b322832ef344fd04487e"
-    profile-id: 452169
+    # O Spring tenta ler a variável do sistema, se não existir, fica vazio (seguro)
+    key: ${NEXTDNS_API_KEY}
+    profile-id: ${NEXTDNS_PROFILE_ID}
   base-url: https://api.nextdns.io
 
 auth:
-  secret-token: ${APP_SECRET_TOKEN:G25K03g01@} # Senha para você usar no celular
+  # Aqui usamos o formato: ${VARIAVEL:VALOR_PADRAO}
+  # Se você não definir a variável no Docker, ele usa o G25K03g01@
+  secret-token: ${APP_SECRET_TOKEN}
 
 #logging:
 #  level:
