@@ -14,7 +14,7 @@ public class NextDnsClient {
     private final WebClient webClient;
 
     // Se não achar a chave, usa o valor padrão após o ':'
-    @Value("${nextdns.api.key:9e0a61afeeb2dbe9adc8b322832ef344fd04487e}")
+    @Value("${nextdns.api.key}")
     private String apiKey;
 
     @Value("${nextdns.profile-id:452169}")
