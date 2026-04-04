@@ -96,6 +96,7 @@
         const alertBox = document.getElementById('timer-alert');
         const display = document.getElementById('countdown');
 
+        // Só inicia se houver o parâmetro 'minutos' na URL
         if (alertBox && minutosStr) {
             const minutos = parseInt(minutosStr);
             if (!isNaN(minutos)) {
@@ -105,17 +106,20 @@
                     let mins = Math.floor(tempoRestante / 60);
                     let segs = tempoRestante % 60;
 
-                    display.textContent =
-                        (mins < 10 ? "0" + mins : mins) + ":" +
+                    display.textContent = 
+                        (mins < 10 ? "0" + mins : mins) + ":" + 
                         (segs < 10 ? "0" + segs : segs);
 
                     if (tempoRestante <= 0) {
                         clearInterval(intervalo);
                         
-                        // Redireciona para a home limpando o timer da URL para evitar loop
+                        // --- A MÁGICA ACONTECE AQUI ---
                         const token = urlParams.get('token');
-                        const baseUrl = window.location.pathname;
-                        window.location.href = baseUrl + "?status=bloqueado&token=" + (token ? token : "");
+                        // Pegamos apenas o caminho (ex: /nextdnsapp/gui) sem os parâmetros antigos
+                        const cleanPath = window.location.pathname; 
+                        
+                        // Redireciona para a página "limpa", mantendo apenas o token e o status final
+                        window.location.href = cleanPath + "?status=bloqueado&token=" + (token ? token : "");
                     }
                     tempoRestante--;
                 }, 1000);

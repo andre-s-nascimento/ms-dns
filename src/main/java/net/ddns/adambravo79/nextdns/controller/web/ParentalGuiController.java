@@ -25,10 +25,11 @@ public class ParentalGuiController {
         return Mono.just("index");
     }
 
-    @PostMapping("/gui/bloquear")
+@PostMapping("/gui/bloquear")
     public Mono<String> bloquear(ServerWebExchange exchange) {
         String token = exchange.getRequest().getQueryParams().getFirst("token");
         return service.bloquearComLog(exchange)
+                // ✅ APENAS /gui (O Spring completa com /nextdnsapp)
                 .thenReturn("redirect:/gui?status=bloqueado&token=" + (token != null ? token : ""));
     }
 
@@ -36,6 +37,7 @@ public class ParentalGuiController {
     public Mono<String> liberar(ServerWebExchange exchange) {
         String token = exchange.getRequest().getQueryParams().getFirst("token");
         return service.liberarComLog(exchange)
+                // ✅ APENAS /gui
                 .thenReturn("redirect:/gui?status=liberado&token=" + (token != null ? token : ""));
     }
 
@@ -43,11 +45,12 @@ public class ParentalGuiController {
     public Mono<String> timer(@RequestParam("minutos") int minutos, ServerWebExchange exchange) {
         String token = exchange.getRequest().getQueryParams().getFirst("token");
         service.liberarTemporario(minutos, exchange);
-
+        
+        // ✅ APENAS /gui e removemos o loop infinito com o JavaScript novo
         String redirectPath = "redirect:/gui?status=timer_iniciado&minutos=" + minutos;
-        if (token != null)
+        if (token != null && !token.isEmpty()) {
             redirectPath += "&token=" + token;
-
+        }
         return Mono.just(redirectPath);
     }
 
