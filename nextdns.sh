@@ -23,7 +23,8 @@ fi
 
 # 2. Build da Imagem Docker
 echo "📦 Passo 1: Construindo imagem Docker..."
-docker build -t $IMAGE_NAME .
+DOCKER_BUILDKIT=1 docker build -t $IMAGE_NAME .
+#docker build -t $IMAGE_NAME .
 
 # VERIFICAÇÃO DE SUCESSO:
 if [ $? -ne 0 ]; then
@@ -32,8 +33,14 @@ if [ $? -ne 0 ]; then
 fi
 
 # 3. Limpeza de containers antigos
-echo "🛑 Passo 2: Removendo container anterior (se existir)..."
-docker rm -f $APP_NAME || true
+echo "🛑 Passo 2: Verificando containers anteriores..."
+if [ "$(docker ps -aq -f name=app-nextdns)" ]; then
+    echo "   -> Removendo versão antiga de 'app-nextdns'..."
+    docker rm -f app-nextdns > /dev/null
+    echo "   ✅ Container removido com sucesso."
+else
+    echo "   ✨ Nenhum container anterior encontrado. Seguindo..."
+fi
 
 # 4. Execução do novo container com injeção de segredos
 echo "🏃 Passo 3: Subindo nova versão na porta $PORT_EXTERNA..."

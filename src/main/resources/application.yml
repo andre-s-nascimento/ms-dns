@@ -1,31 +1,19 @@
----
+
+APP_SECRET_TOKEN: ${APP_SECRET_TOKEN:G25K03g01@}
+
 spring:
   main:
     allow-bean-definition-overriding: true
-  security:
-    user:
-      password: "" # Desativa a senha gerada
-  autoconfigure:
-    exclude: org.springframework.boot.autoconfigure.security.reactive.ReactiveUserDetailsServiceAutoConfiguration
+  thymeleaf:
+    cache: false # Desativar cache ajuda no desenvolvimento na OCI
+
+server:
+  port: 8080
+  # Estratégia 'framework' faz o Spring respeitar o header X-Forwarded-Prefix do Apache
+  forward-headers-strategy: framework
 
 nextdns:
   api:
-    # O Spring tenta ler a variável do sistema, se não existir, fica vazio (seguro)
     key: ${NEXTDNS_API_KEY}
     profile-id: ${NEXTDNS_PROFILE_ID}
   base-url: https://api.nextdns.io
-
-auth:
-  # Aqui usamos o formato: ${VARIAVEL:VALOR_PADRAO}
-  # Se você não definir a variável no Docker, ele usa o G25K03g01@
-  secret-token: ${APP_SECRET_TOKEN}
-
-#logging:
-#  level:
-#    org.springframework.security: DEBUG
-#    org.springframework.web.server.adapter.HttpWebHandlerAdapter: TRACE
-
-server:
-  servlet:
-    context-path: /nextdnsapp
-  forward-headers-strategy: framework

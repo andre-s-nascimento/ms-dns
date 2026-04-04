@@ -12,46 +12,46 @@ import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 @Controller
-@RequestMapping("/gui")
+@RequestMapping({ "/nextdnsapp", "/" })
 @RequiredArgsConstructor
 @Slf4j
 public class ParentalGuiController {
 
-    public static final String TOKEN = "token";
     private final NextDnsService service;
 
-    // Ajustado para aceitar o token e retornar Mono, conforme solicitado
-    @GetMapping
-    public Mono<String> showGui(@RequestParam(name = TOKEN, required = false) String token) {
-        // A lógica de validação do token já está no SecurityConfig,
-        // então aqui apenas retornamos o nome do modelo.
+    // Mapeia a entrada principal
+    @GetMapping(value = { "", "/", "/gui" })
+    public Mono<String> showGui() {
         return Mono.just("index");
     }
 
-    @PostMapping("/bloquear")
+    @PostMapping("/gui/bloquear")
     public Mono<String> bloquear(ServerWebExchange exchange) {
-        // Captura o _token_ que veio na requisição atual para manter o acesso no redirect
-        String token = exchange.getRequest().getQueryParams().getFirst(TOKEN);
-
+        String token = exchange.getRequest().getQueryParams().getFirst("token");
         return service.bloquearComLog(exchange)
+                // REMOVIDO o /nextdnsapp daqui. O Spring vai gerenciar o prefixo.
                 .thenReturn("redirect:/gui?status=bloqueado&token=" + (token != null ? token : ""));
     }
 
-    @PostMapping("/liberar")
+    @PostMapping("/gui/liberar")
     public Mono<String> liberar(ServerWebExchange exchange) {
-        String token = exchange.getRequest().getQueryParams().getFirst(TOKEN);
-
+        String token = exchange.getRequest().getQueryParams().getFirst("token");
         return service.liberarComLog(exchange)
                 .thenReturn("redirect:/gui?status=liberado&token=" + (token != null ? token : ""));
     }
 
-    @GetMapping("/timer") // Agora é GET
+    @GetMapping("/gui/timer")
     public Mono<String> timer(@RequestParam("minutos") int minutos, ServerWebExchange exchange) {
-        String token = exchange.getRequest().getQueryParams().getFirst(TOKEN);
-
-        log.info("Recebido pedido de timer: {} minutos", minutos);
+        String token = exchange.getRequest().getQueryParams().getFirst("token");
         service.liberarTemporario(minutos, exchange);
 
-        return Mono.just("redirect:/gui?status=timer_iniciado&minutos=" + minutos + "&token=" + (token != null ? token : ""));
+        // REDIRECT LIMPO: O Spring usará o X-Forwarded-Prefix do Apache para montar a
+        // URL
+        String redirectPath = "redirect:/gui?status=timer_iniciado&minutos=" + minutos;
+        if (token != null && !token.isEmpty()) {
+            redirectPath += "&token=" + token;
+        }
+        return Mono.just(redirectPath);
     }
+
 }

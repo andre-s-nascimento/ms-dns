@@ -1,37 +1,51 @@
-# Estágio 1: Build
+# syntax=docker/dockerfile:1.4
+
+# ==============================
+# 🏗️ BUILD (low memory friendly)
+# ==============================
 FROM eclipse-temurin:21-jdk-jammy AS build
+
 WORKDIR /app
 
-# Copia os arquivos de configuração do Gradle
+# Gradle config pra pouca memória
+ENV GRADLE_OPTS="-Xmx256m -XX:MaxMetaspaceSize=128m -Dorg.gradle.daemon=false"
+
+# 1️⃣ Arquivos de build
 COPY gradlew .
 COPY gradle gradle
+COPY build.gradle settings.gradle gradle.properties ./
+
 RUN chmod +x gradlew
-COPY build.gradle .
-COPY settings.gradle .
 
-# Dá permissão e baixa as dependências (cache)
-RUN ./gradlew dependencies --no-daemon --max-workers=1 "-Dorg.gradle.jvmargs=-Xmx512m"
+# 2️⃣ Baixa dependências (com cache)
+RUN --mount=type=cache,target=/root/.gradle \
+    ./gradlew build -x test \
+    --no-daemon \
+    --max-workers=1 \
+    --no-parallel || true
 
-# Copia o código fonte e gera o jar
+# 3️⃣ Código fonte
 COPY src src
-RUN ./gradlew bootJar --no-daemon --max-workers=1 "-Dorg.gradle.jvmargs=-Xmx512m"
 
-# Estágio 2: Runtime (Imagem final leve)
+# 4️⃣ Build final (controlando memória)
+RUN --mount=type=cache,target=/root/.gradle \
+    ./gradlew bootJar \
+    --no-daemon \
+    --max-workers=1 \
+    --no-parallel
+
+# ==============================
+# 🚀 RUNTIME (leve)
+# ==============================
 FROM eclipse-temurin:21-jre-jammy
+
 WORKDIR /app
 
-# Copia apenas o JAR gerado no estágio anterior
 COPY --from=build /app/build/libs/*.jar app.jar
 
-# Expõe a porta do Spring
 EXPOSE 8080
 
-# Declaramos as variáveis sem valores fixos
-# O Spring Boot lerá esses nomes do ambiente do sistema
-ENV APP_SECRET_TOKEN=""
-ENV NEXTDNS_API_KEY=""
-ENV NEXTDNS_PROFILE_ID=""
-ENV JAVA_OPTS="-Xms256m -Xmx512m"
+# Ajustado pra pouca RAM
+ENV JAVA_OPTS="-Xms64m -Xmx256m -Xss256k -XX:+UseSerialGC"
 
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
-
