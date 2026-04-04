@@ -29,7 +29,6 @@ public class ParentalGuiController {
     public Mono<String> bloquear(ServerWebExchange exchange) {
         String token = exchange.getRequest().getQueryParams().getFirst("token");
         return service.bloquearComLog(exchange)
-                // REMOVIDO o /nextdnsapp daqui. O Spring vai gerenciar o prefixo.
                 .thenReturn("redirect:/gui?status=bloqueado&token=" + (token != null ? token : ""));
     }
 
@@ -45,12 +44,10 @@ public class ParentalGuiController {
         String token = exchange.getRequest().getQueryParams().getFirst("token");
         service.liberarTemporario(minutos, exchange);
 
-        // REDIRECT LIMPO: O Spring usará o X-Forwarded-Prefix do Apache para montar a
-        // URL
         String redirectPath = "redirect:/gui?status=timer_iniciado&minutos=" + minutos;
-        if (token != null && !token.isEmpty()) {
+        if (token != null)
             redirectPath += "&token=" + token;
-        }
+
         return Mono.just(redirectPath);
     }
 

@@ -1,120 +1,127 @@
-<!doctype html>
+<!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org" lang="pt-br">
-
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#2c3e50">
     <title>Controle NextDNS</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body {
-            background-color: #121212;
-            color: white;
-            padding-top: 50px;
+        body { background-color: #121212; color: white; padding-top: 50px; }
+        .card { background-color: #1e1e1e; border: 1px solid #333; }
+        
+        /* Botão Iniciar com Hover em destaque suave */
+        .btn-timer { 
+            background-color: #6f42c1; 
+            color: white; 
+            transition: background-color 0.3s ease;
         }
-
-        .card {
-            background-color: #1e1e1e;
-            border: 1px solid #333;
-        }
-
-        .btn-timer {
-            background-color: #6f42c1;
+        .btn-timer:hover { 
+            background-color: #8559da; /* Roxo um pouco mais claro, sem ficar preto */
             color: white;
         }
-
-        .alert {
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }
-
-        .title {
-            color: #fff;
-        }
+        
+        .alert { border-radius: 8px; margin-bottom: 20px; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); }
+        .title { color: #fff; }
+        .form-select { cursor: pointer; }
     </style>
 </head>
-
 <body>
-    <div class="container text-center" style="max-width: 450px">
-        <div th:if="${param.status != null}">
-            <div th:if="${#lists.contains(param.status, 'bloqueado')}" class="alert alert-danger">
-                <strong>Bloqueado!</strong>
-            </div>
-            <div th:if="${#lists.contains(param.status, 'liberado')}" class="alert alert-success">
-                <strong>Liberado!</strong>
-            </div>
-            <div th:if="${#lists.contains(param.status, 'timer_iniciado')}" id="timer-alert" class="alert alert-info">
-                <strong>Temporizador Ativo!</strong> <span id="countdown">--:--</span>
-            </div>
+<div class="container text-center" style="max-width: 450px;">
+
+    <div th:if="${param.status != null}">
+        <div th:if="${#lists.contains(param.status, 'bloqueado')}" class="alert alert-danger">
+            <strong>Bloqueado!</strong> O NextDNS foi configurado para restringir o acesso.
         </div>
-
-        <div class="card p-4 shadow">
-            <h2 class="title mb-4">Controle Parental</h2>
-
-            <div th:with="tokenValue=${param.token != null ? param.token : ''}">
-                <div class="d-grid gap-3">
-                    <form th:action="@{gui/bloquear(token=${tokenValue})}" method="post">
-                        <button type="submit" class="btn btn-danger btn-lg w-100 py-3">
-                            Bloquear Agora
-                        </button>
-                    </form>
-
-                    <form th:action="@{gui/liberar(token=${tokenValue})}" method="post">
-                        <button type="submit" class="btn btn-success btn-lg w-100 py-3">
-                            Liberar Geral
-                        </button>
-                    </form>
-
-                    <hr class="my-4" style="border-color: #444" />
-
-                    <h5 class="text-secondary">Acesso Temporário</h5>
-                    <form th:action="@{gui/timer}" method="get">
-                        <div class="row g-2">
-                            <div class="col-8">
-                                <input type="hidden" name="token" th:value="${tokenValue}" />
-                                <select name="minutos" class="form-select bg-dark text-white border-secondary h-100">
-                                    <option value="1" selected>1 minuto</option>
-                                    <option value="15">15 minutos</option>
-                                    <option value="30">30 minutos</option>
-                                    <option value="60">1 hora</option>
-                                </select>
-                            </div>
-                            <div class="col-4">
-                                <button type="submit" class="btn btn-timer w-100 h-100">
-                                    Iniciar
-                                </button>
-                            </div>
-                        </div>
-                    </form>
-                </div>
-            </div>
+        <div th:if="${#lists.contains(param.status, 'liberado')}" class="alert alert-success">
+            <strong>Liberado!</strong> O acesso agora está sem restrições.
+        </div>
+        <div th:if="${#lists.contains(param.status, 'timer_iniciado')}"
+             id="timer-alert" class="alert alert-info">
+            <strong>Temporizador Ativo!</strong>
+            Acesso liberado por: <span id="countdown">--:--</span>
         </div>
     </div>
 
-    <script th:inline="javascript">
-        document.addEventListener("DOMContentLoaded", function () {
-            const urlParams = new URLSearchParams(window.location.search);
-            const minutos = parseInt(urlParams.get("minutos"));
-            const display = document.getElementById("countdown");
+    <div class="card p-4 shadow">
+        <h2 class="title mb-4">Controle Parental</h2>
 
-            if (display && !isNaN(minutos)) {
+        <div th:with="tokenValue=${param.token != null ? param.token : ''}">
+
+            <div class="d-grid gap-3">
+                <form th:action="@{/gui/bloquear(token=${tokenValue})}" method="post">
+                    <button type="submit" class="btn btn-danger btn-lg w-100 py-3">Bloquear Agora</button>
+                </form>
+
+                <form th:action="@{/gui/liberar(token=${tokenValue})}" method="post">
+                    <button type="submit" class="btn btn-success btn-lg w-100 py-3">Liberar Geral</button>
+                </form>
+
+                <hr class="my-4" style="border-color: #444;">
+
+                <h5 class="text-secondary">Acesso Temporário</h5>
+                
+                <form th:action="@{/gui/timer}" method="get">
+                    <div class="row g-2">
+                        <div class="col-8">
+                            <input type="hidden" name="token" th:value="${tokenValue}">
+
+                            <select name="minutos" class="form-select bg-dark text-white border-secondary h-100">
+                                <option value="1" selected>1 minuto (Teste)</option>
+                                <option value="15">15 minutos</option>
+                                <option value="30">30 minutos</option>
+                                <option value="60">1 hora</option>
+                                <option value="90">1h 30min</option>
+                                <option value="120">2 horas</option>
+                                <option value="180">3 horas</option>
+                                <option value="240">4 horas</option>
+                            </select>
+                        </div>
+                        <div class="col-4">
+                            <button type="submit" class="btn btn-timer w-100 h-100">Iniciar</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script th:inline="javascript">
+    document.addEventListener('DOMContentLoaded', function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const minutosStr = urlParams.get('minutos');
+        const alertBox = document.getElementById('timer-alert');
+        const display = document.getElementById('countdown');
+
+        if (alertBox && minutosStr) {
+            const minutos = parseInt(minutosStr);
+            if (!isNaN(minutos)) {
                 let tempoRestante = minutos * 60;
-                const intervalo = setInterval(function () {
+
+                const intervalo = setInterval(function() {
                     let mins = Math.floor(tempoRestante / 60);
                     let segs = tempoRestante % 60;
+
                     display.textContent =
-                        (mins < 10 ? "0" + mins : mins) +
-                        ":" +
+                        (mins < 10 ? "0" + mins : mins) + ":" +
                         (segs < 10 ? "0" + segs : segs);
+
                     if (tempoRestante <= 0) {
                         clearInterval(intervalo);
-                        location.reload();
+                        
+                        // Redireciona para a home limpando o timer da URL para evitar loop
+                        const token = urlParams.get('token');
+                        const baseUrl = window.location.pathname;
+                        window.location.href = baseUrl + "?status=bloqueado&token=" + (token ? token : "");
                     }
                     tempoRestante--;
                 }, 1000);
             }
-        });
-    </script>
+        }
+    });
+</script>
 </body>
-
 </html>
