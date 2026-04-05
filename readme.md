@@ -76,7 +76,7 @@ cd nextdns-parental
 ### 2. Configure as variáveis de ambiente
 
 ```bash
-cp .env.example .env
+cp .env.model .env
 nano .env
 ```
 
