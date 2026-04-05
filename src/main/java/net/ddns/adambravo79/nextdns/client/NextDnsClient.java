@@ -1,6 +1,8 @@
 package net.ddns.adambravo79.nextdns.client;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -8,46 +10,83 @@ import reactor.core.publisher.Mono;
 
 import java.util.Map;
 
+@Slf4j
 @Service
 public class NextDnsClient {
 
     private final WebClient webClient;
-
-    // Se não achar a chave, usa o valor padrão após o ':'
-    @Value("${nextdns.api.key}")
-    private String apiKey;
-
-    @Value("${nextdns.profile-id:452169}")
-    private String profileId;
+    private final String apiKey;
+    private final String profileId;
 
     public NextDnsClient(WebClient.Builder builder,
+                         @Value("${nextdns.api.key:#{null}}") String apiKey,
+                         @Value("${nextdns.profile-id:#{null}}") String profileId,
                          @Value("${nextdns.base-url:https://api.nextdns.io}") String baseUrl) {
-        this.webClient = builder.baseUrl(baseUrl).build();
+        
+        if (apiKey == null || profileId == null) {
+            throw new IllegalStateException("NEXTDNS_API_KEY e NEXTDNS_PROFILE_ID são obrigatórios!");
+        }
+        
+        this.apiKey = apiKey;
+        this.profileId = profileId;
+        
+        this.webClient = builder
+                .baseUrl(baseUrl)
+                .build();
     }
 
-    // BLOQUEAR: POST /profiles/{id}/parentalControl/services {id: "youtube"}
     public Mono<Void> bloquearYoutube() {
+        log.info("Enviando requisição para BLOQUEAR YouTube - Profile: {}", profileId);
+        
         return webClient.post()
                 .uri("/profiles/{id}/parentalControl/services", profileId)
                 .header("X-Api-Key", apiKey)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("id", "youtube"))
                 .retrieve()
-                // Se o NextDNS disser "já tá bloqueado" (400), a gente ignora o erro
-                .onStatus(status -> status.value() == 400, response -> Mono.empty())
+                .onStatus(HttpStatusCode::is4xxClientError, response -> 
+                    response.bodyToMono(String.class)
+                        .flatMap(errorBody -> {
+                            if (response.statusCode().value() == 400) {
+                                log.info("YouTube já estava bloqueado (código 400)");
+                            } else {
+                                log.warn("Erro {} ao bloquear: {}", response.statusCode().value(), errorBody);
+                            }
+                            return Mono.empty();
+                        }))
+                .onStatus(HttpStatusCode::is5xxServerError, response ->
+                    response.bodyToMono(String.class)
+                        .flatMap(errorBody -> {
+                            log.error("Erro interno NextDNS ao bloquear: {}", errorBody);
+                            return Mono.error(new RuntimeException("Erro no servidor NextDNS: " + errorBody));
+                        }))
                 .toBodilessEntity()
                 .then();
     }
 
-    // LIBERAR: DELETE /profiles/{id}/parentalControl/services/youtube
     public Mono<Void> liberarYoutube() {
+        log.info("Enviando requisição para LIBERAR YouTube - Profile: {}", profileId);
+        
         return webClient.delete()
                 .uri("/profiles/{id}/parentalControl/services/youtube", profileId)
                 .header("X-Api-Key", apiKey)
-                .header("User-Agent", "curl/7.81.0") // O "pulo do gato" aqui
                 .retrieve()
-                // Se o YouTube já estiver liberado (404), não queremos erro 500 no Java
-                .onStatus(status -> status.is4xxClientError(), resp -> Mono.empty())
+                .onStatus(HttpStatusCode::is4xxClientError, response ->
+                    response.bodyToMono(String.class)
+                        .flatMap(errorBody -> {
+                            if (response.statusCode().value() == 404) {
+                                log.info("YouTube já estava liberado (código 404)");
+                            } else {
+                                log.warn("Erro {} ao liberar: {}", response.statusCode().value(), errorBody);
+                            }
+                            return Mono.empty();
+                        }))
+                .onStatus(HttpStatusCode::is5xxServerError, response ->
+                    response.bodyToMono(String.class)
+                        .flatMap(errorBody -> {
+                            log.error("Erro interno NextDNS ao liberar: {}", errorBody);
+                            return Mono.error(new RuntimeException("Erro no servidor NextDNS: " + errorBody));
+                        }))
                 .toBodilessEntity()
                 .then();
     }

@@ -11,18 +11,15 @@
     <style>
         body { background-color: #121212; color: white; padding-top: 50px; }
         .card { background-color: #1e1e1e; border: 1px solid #333; }
-        
-        /* Botão Iniciar com Hover em destaque suave */
         .btn-timer { 
             background-color: #6f42c1; 
             color: white; 
             transition: background-color 0.3s ease;
         }
         .btn-timer:hover { 
-            background-color: #8559da; /* Roxo um pouco mais claro, sem ficar preto */
+            background-color: #8559da;
             color: white;
         }
-        
         .alert { border-radius: 8px; margin-bottom: 20px; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); }
         .title { color: #fff; }
         .form-select { cursor: pointer; }
@@ -31,7 +28,16 @@
 <body>
 <div class="container text-center" style="max-width: 450px;">
 
-    <div th:if="${param.status != null}">
+    <div th:if="${param.error != null}">
+        <div th:if="${#lists.contains(param.error, 'unauthorized')}" class="alert alert-danger">
+            <strong>Erro de Autenticação!</strong> Token inválido ou não informado. Verifique a URL.
+        </div>
+        <div th:if="${#lists.contains(param.error, 'invalid_minutes')}" class="alert alert-warning">
+            <strong>Valor Inválido!</strong> O tempo deve ser entre 1 e 480 minutos.
+        </div>
+    </div>
+
+    <div th:if="${param.status != null and param.error == null}">
         <div th:if="${#lists.contains(param.status, 'bloqueado')}" class="alert alert-danger">
             <strong>Bloqueado!</strong> O NextDNS foi configurado para restringir o acesso.
         </div>
@@ -49,14 +55,20 @@
         <h2 class="title mb-4">Controle Parental</h2>
 
         <div th:with="tokenValue=${param.token != null ? param.token : ''}">
+            
+            <div th:if="${tokenValue == null or tokenValue == ''}" class="alert alert-warning">
+                <strong>Atenção:</strong> Nenhum token informado. Adicione <code>?token=SEU_TOKEN</code> na URL.
+            </div>
 
             <div class="d-grid gap-3">
                 <form th:action="@{/gui/bloquear(token=${tokenValue})}" method="post">
-                    <button type="submit" class="btn btn-danger btn-lg w-100 py-3">Bloquear Agora</button>
+                    <button type="submit" class="btn btn-danger btn-lg w-100 py-3" 
+                            th:disabled="${tokenValue == null or tokenValue == ''}">Bloquear Agora</button>
                 </form>
 
                 <form th:action="@{/gui/liberar(token=${tokenValue})}" method="post">
-                    <button type="submit" class="btn btn-success btn-lg w-100 py-3">Liberar Geral</button>
+                    <button type="submit" class="btn btn-success btn-lg w-100 py-3"
+                            th:disabled="${tokenValue == null or tokenValue == ''}">Liberar Geral</button>
                 </form>
 
                 <hr class="my-4" style="border-color: #444;">
@@ -67,7 +79,6 @@
                     <div class="row g-2">
                         <div class="col-8">
                             <input type="hidden" name="token" th:value="${tokenValue}">
-
                             <select name="minutos" class="form-select bg-dark text-white border-secondary h-100">
                                 <option value="1" selected>1 minuto (Teste)</option>
                                 <option value="15">15 minutos</option>
@@ -80,7 +91,8 @@
                             </select>
                         </div>
                         <div class="col-4">
-                            <button type="submit" class="btn btn-timer w-100 h-100">Iniciar</button>
+                            <button type="submit" class="btn btn-timer w-100 h-100"
+                                    th:disabled="${tokenValue == null or tokenValue == ''}">Iniciar</button>
                         </div>
                     </div>
                 </form>
@@ -96,34 +108,26 @@
         const alertBox = document.getElementById('timer-alert');
         const display = document.getElementById('countdown');
 
-        // Só inicia se houver o parâmetro 'minutos' na URL
-        if (alertBox && minutosStr) {
+        if (alertBox && minutosStr && !isNaN(parseInt(minutosStr))) {
             const minutos = parseInt(minutosStr);
-            if (!isNaN(minutos)) {
-                let tempoRestante = minutos * 60;
+            let tempoRestante = minutos * 60;
 
-                const intervalo = setInterval(function() {
-                    let mins = Math.floor(tempoRestante / 60);
-                    let segs = tempoRestante % 60;
+            const intervalo = setInterval(function() {
+                let mins = Math.floor(tempoRestante / 60);
+                let segs = tempoRestante % 60;
 
-                    display.textContent = 
-                        (mins < 10 ? "0" + mins : mins) + ":" + 
-                        (segs < 10 ? "0" + segs : segs);
+                display.textContent = 
+                    (mins < 10 ? "0" + mins : mins) + ":" + 
+                    (segs < 10 ? "0" + segs : segs);
 
-                    if (tempoRestante <= 0) {
-                        clearInterval(intervalo);
-                        
-                        // --- A MÁGICA ACONTECE AQUI ---
-                        const token = urlParams.get('token');
-                        // Pegamos apenas o caminho (ex: /nextdnsapp/gui) sem os parâmetros antigos
-                        const cleanPath = window.location.pathname; 
-                        
-                        // Redireciona para a página "limpa", mantendo apenas o token e o status final
-                        window.location.href = cleanPath + "?status=bloqueado&token=" + (token ? token : "");
-                    }
-                    tempoRestante--;
-                }, 1000);
-            }
+                if (tempoRestante <= 0) {
+                    clearInterval(intervalo);
+                    const token = urlParams.get('token');
+                    const cleanPath = window.location.pathname;
+                    window.location.href = cleanPath + "?status=bloqueado&token=" + (token ? token : "");
+                }
+                tempoRestante--;
+            }, 1000);
         }
     });
 </script>

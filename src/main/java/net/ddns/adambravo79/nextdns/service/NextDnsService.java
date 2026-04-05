@@ -12,6 +12,8 @@ import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
 
 @Slf4j
 @Service
@@ -20,27 +22,27 @@ public class NextDnsService {
 
     private final NextDnsClient client;
     private final TaskScheduler taskScheduler;
+    
+    // Armazena timers ativos por sessão (token + ip)
+    private final ConcurrentHashMap<String, ScheduledFuture<?>> activeTimers = new ConcurrentHashMap<>();
 
-    /**
-     * Método auxiliar para extrair o IP real de forma segura,
-     * considerando o Apache2 como Proxy Reverso.
-     */
     private String getClientIp(ServerWebExchange exchange) {
-        // Tenta pegar o IP real enviado pelo Apache
         String xForwardedFor = exchange.getRequest().getHeaders().getFirst("X-Forwarded-For");
 
         if (xForwardedFor != null && !xForwardedFor.isEmpty()) {
-            // Pode vir uma lista de IPs, pegamos o primeiro
             return xForwardedFor.split(",")[0].trim();
         }
 
-        // Fallback: se não houver proxy, tenta o endereço remoto direto com segurança
         InetSocketAddress remoteAddress = exchange.getRequest().getRemoteAddress();
         if (remoteAddress != null && remoteAddress.getAddress() != null) {
             return remoteAddress.getAddress().getHostAddress();
         }
 
         return "IP-DESCONHECIDO";
+    }
+    
+    private String getSessionKey(String token, String ip) {
+        return token + "|" + ip;
     }
 
     public Mono<Void> bloquearComLog(ServerWebExchange exchange) {
@@ -55,17 +57,40 @@ public class NextDnsService {
         return client.liberarYoutube();
     }
 
-    public void liberarTemporario(int minutos, ServerWebExchange exchange) {
+    public Mono<Void> liberarTemporario(int minutos, ServerWebExchange exchange, String token) {
         String ip = getClientIp(exchange);
+        String sessionKey = getSessionKey(token, ip);
+        
         log.info("[{}] - ACESSO TEMPORÁRIO iniciado por {} min às {}", ip, minutos, LocalDateTime.now());
 
-        // 1. Libera agora
-        client.liberarYoutube().subscribe();
+        // Cancela timer existente para esta sessão
+        if (activeTimers.containsKey(sessionKey)) {
+            ScheduledFuture<?> existingTimer = activeTimers.remove(sessionKey);
+            if (existingTimer != null) {
+                existingTimer.cancel(false);
+                log.info("[{}] - Timer anterior cancelado", ip);
+            }
+        }
 
-        // 2. Agenda o bloqueio automático
-        taskScheduler.schedule(() -> {
-            log.info("[{}] - Timer finalizado. Bloqueando YouTube automaticamente...", ip);
-            client.bloquearYoutube().subscribe();
-        }, Instant.now().plus(Duration.ofMinutes(minutos)));
+        // Libera agora
+        return client.liberarYoutube()
+            .doOnSuccess(v -> log.info("[{}] - YouTube liberado com sucesso", ip))
+            .doOnError(e -> log.error("[{}] - Erro ao liberar YouTube: {}", ip, e.getMessage()))
+            .then(Mono.fromRunnable(() -> {
+                // Agenda o bloqueio automático
+                ScheduledFuture<?> future = taskScheduler.schedule(() -> {
+                    log.info("[{}] - Timer de {} min finalizado. Bloqueando YouTube automaticamente...", ip, minutos);
+                    client.bloquearYoutube()
+                        .doOnSuccess(v -> {
+                            log.info("[{}] - YouTube bloqueado automaticamente após timer", ip);
+                            activeTimers.remove(sessionKey);
+                        })
+                        .doOnError(e -> log.error("[{}] - Erro ao bloquear automaticamente: {}", ip, e.getMessage()))
+                        .subscribe();
+                }, Instant.now().plus(Duration.ofMinutes(minutos)));
+                
+                activeTimers.put(sessionKey, future);
+                log.info("[{}] - Timer de {} minutos agendado com sucesso", ip, minutos);
+            }));
     }
 }
