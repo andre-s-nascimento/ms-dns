@@ -11,8 +11,10 @@ public class SchedulerConfig {
     @Bean
     public TaskScheduler taskScheduler() {
         ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
-        scheduler.setPoolSize(2); // 2 threads são mais que suficientes para o seu caso
+        scheduler.setPoolSize(3);
         scheduler.setThreadNamePrefix("NextDnsTimer-");
+        scheduler.setErrorHandler(throwable -> 
+            System.err.println("Erro no scheduler: " + throwable.getMessage()));
         scheduler.initialize();
         return scheduler;
     }

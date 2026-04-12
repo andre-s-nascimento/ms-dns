@@ -1,0 +1,1008 @@
+
+
+/**********************************************************
+ * ARQUIVO: ./main/java/net/ddns/adambravo79/nextdns/NextDnsApplication.java
+ **********************************************************/
+
+package net.ddns.adambravo79.nextdns;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
+
+@SpringBootApplication
+@EnableScheduling
+// O Spring Boot por padrão já escaneia todos os subpacotes (domain, repository, etc)
+public class NextDnsApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(NextDnsApplication.class, args);
+    }
+}
+
+/**********************************************************
+ * ARQUIVO: ./main/java/net/ddns/adambravo79/nextdns/client/NextDnsClient.java
+ **********************************************************/
+
+package net.ddns.adambravo79.nextdns.client;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
+
+import java.util.Map;
+
+@Slf4j
+@Service
+public class NextDnsClient {
+
+    private final WebClient webClient;
+
+    public NextDnsClient(WebClient.Builder builder,
+                         @Value("${nextdns.base-url:https://api.nextdns.io}") String baseUrl) {
+        
+        this.webClient = builder
+                .baseUrl(baseUrl)
+                .build();
+    }
+
+    /**
+     * Agora recebe profileId e apiKey como argumentos vindos do banco de dados (via Service)
+     */
+    public Mono<Void> bloquearYoutube(String profileId, String apiKey) {
+        log.info("Enviando requisição para BLOQUEAR YouTube - Profile: {}", profileId);
+        
+        return webClient.post()
+                .uri("/profiles/{id}/parentalControl/services", profileId)
+                .header("X-Api-Key", apiKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("id", "youtube"))
+                .retrieve()
+                .onStatus(HttpStatusCode::is4xxClientError, response -> 
+                    response.bodyToMono(String.class)
+                        .flatMap(errorBody -> {
+                            if (response.statusCode().value() == 400) {
+                                log.info("YouTube já estava bloqueado no profile {}", profileId);
+                            } else {
+                                log.warn("Erro {} ao bloquear: {}", response.statusCode().value(), errorBody);
+                            }
+                            return Mono.empty();
+                        }))
+                .onStatus(HttpStatusCode::is5xxServerError, response ->
+                    response.bodyToMono(String.class)
+                        .flatMap(errorBody -> {
+                            log.error("Erro interno NextDNS ao bloquear: {}", errorBody);
+                            return Mono.error(new RuntimeException("Erro no servidor NextDNS: " + errorBody));
+                        }))
+                .toBodilessEntity()
+                .then();
+    }
+
+    /**
+     * Agora recebe profileId e apiKey como argumentos vindos do banco de dados (via Service)
+     */
+    public Mono<Void> liberarYoutube(String profileId, String apiKey) {
+        log.info("Enviando requisição para LIBERAR YouTube - Profile: {}", profileId);
+        
+        return webClient.delete()
+                .uri("/profiles/{id}/parentalControl/services/youtube", profileId)
+                .header("X-Api-Key", apiKey)
+                .retrieve()
+                .onStatus(HttpStatusCode::is4xxClientError, response ->
+                    response.bodyToMono(String.class)
+                        .flatMap(errorBody -> {
+                            if (response.statusCode().value() == 404) {
+                                log.info("YouTube já estava liberado no profile {}", profileId);
+                            } else {
+                                log.warn("Erro {} ao liberar: {}", response.statusCode().value(), errorBody);
+                            }
+                            return Mono.empty();
+                        }))
+                .onStatus(HttpStatusCode::is5xxServerError, response ->
+                    response.bodyToMono(String.class)
+                        .flatMap(errorBody -> {
+                            log.error("Erro interno NextDNS ao liberar: {}", errorBody);
+                            return Mono.error(new RuntimeException("Erro no servidor NextDNS: " + errorBody));
+                        }))
+                .toBodilessEntity()
+                .then();
+    }
+}
+
+/**********************************************************
+ * ARQUIVO: ./main/java/net/ddns/adambravo79/nextdns/config/SchedulerConfig.java
+ **********************************************************/
+
+package net.ddns.adambravo79.nextdns.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.TaskScheduler;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
+
+@Configuration
+public class SchedulerConfig {
+
+    @Bean
+    public TaskScheduler taskScheduler() {
+        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setPoolSize(3);
+        scheduler.setThreadNamePrefix("NextDnsTimer-");
+        scheduler.setErrorHandler(throwable -> 
+            System.err.println("Erro no scheduler: " + throwable.getMessage()));
+        scheduler.initialize();
+        return scheduler;
+    }
+}
+
+/**********************************************************
+ * ARQUIVO: ./main/java/net/ddns/adambravo79/nextdns/config/SecurityConfig.java
+ **********************************************************/
+
+package net.ddns.adambravo79.nextdns.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
+import org.springframework.security.config.web.server.ServerHttpSecurity;
+import org.springframework.security.web.server.SecurityWebFilterChain;
+import org.springframework.security.web.server.authentication.RedirectServerAuthenticationSuccessHandler;
+import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatchers;
+import org.springframework.http.HttpStatus;
+import java.net.URI;
+
+@Configuration
+@EnableWebFluxSecurity
+public class SecurityConfig {
+
+@Bean
+public SecurityWebFilterChain springSecurityFilterChain(ServerHttpSecurity http) {
+    return http
+        .csrf(csrf -> csrf.disable())
+        .authorizeExchange(exchanges -> exchanges
+            .pathMatchers("/login/**", "/oauth2/**", "/public/**", "/actuator/**").permitAll()
+            .pathMatchers("/controle-parental/login/**", "/controle-parental/oauth2/**").permitAll()
+            .anyExchange().authenticated()
+        )
+        .oauth2Login(oauth2 -> oauth2
+            // Isso ajuda o Spring a manter o path correto após o login
+            .authenticationMatcher(ServerWebExchangeMatchers.pathMatchers("/controle-parental/login/oauth2/code/*"))
+        )
+        .build();
+}
+
+    // @Bean
+    // public SecurityWebFilterChain springSecurityFilterChain(ServerHttpSecurity
+    // http) {
+    // return http
+    // // 1. Mantenha o CSRF desabilitado por enquanto para evitar o erro 400 no
+    // POST
+    // // do Setup
+    // .csrf(ServerHttpSecurity.CsrfSpec::disable)
+
+    // .authorizeExchange(exchanges -> exchanges
+    // // 2. Adicione os caminhos com "**" para cobrir sub-rotas
+    // // IMPORTANTE: Adicionamos "/gui/setup" aqui se você quiser que o POST seja
+    // // livre,
+    // // mas o ideal é permitir apenas o que é público.
+    // .pathMatchers("/login/**", "/oauth2/**", "/public/**",
+    // "/actuator/health").permitAll()
+
+    // // 3. Se o Apache estiver mandando o path completo,
+    // // liberamos também com o prefixo para não ter erro.
+    // .pathMatchers("/controle-parental/login/**",
+    // "/controle-parental/oauth2/**").permitAll()
+
+    // // 4. T odo o resto (inclusive /gui) exige login
+    // .anyExchange().authenticated())
+    // // ISSO AQUI É A CHAVE: Força o redirecionamento a usar o caminho correto
+    // .exceptionHandling(exceptionHandling -> exceptionHandling
+    // .authenticationEntryPoint(
+    // new RedirectServerAuthenticationEntryPoint("/login")))
+    // // 5. Configura o login OAuth2 padrão
+    // .oauth2Login(oauth2 -> oauth2
+    // // Isso garante que após o login o Spring saiba para onde voltar
+    // .authenticationSuccessHandler(new
+    // RedirectServerAuthenticationSuccessHandler("/gui")))
+    // .build();
+    // }
+}
+
+
+/**********************************************************
+ * ARQUIVO: ./main/java/net/ddns/adambravo79/nextdns/config/WebClientConfig.java
+ **********************************************************/
+
+package net.ddns.adambravo79.nextdns.config;
+
+import io.netty.channel.ChannelOption;
+import io.netty.handler.timeout.ReadTimeoutHandler;
+import io.netty.handler.timeout.WriteTimeoutHandler;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.netty.http.client.HttpClient;
+
+import java.time.Duration;
+import java.util.concurrent.TimeUnit;
+
+@Configuration
+public class WebClientConfig {
+
+    @Bean
+    public WebClient.Builder webClientBuilder() {
+        HttpClient httpClient = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000)
+                .responseTimeout(Duration.ofSeconds(10))
+                .doOnConnected(conn -> 
+                    conn.addHandlerLast(new ReadTimeoutHandler(10, TimeUnit.SECONDS))
+                        .addHandlerLast(new WriteTimeoutHandler(10, TimeUnit.SECONDS))
+                );
+        
+        return WebClient.builder()
+                .clientConnector(new ReactorClientHttpConnector(httpClient));
+    }
+}
+
+/**********************************************************
+ * ARQUIVO: ./main/java/net/ddns/adambravo79/nextdns/config/WebConfig.java
+ **********************************************************/
+
+package net.ddns.adambravo79.nextdns.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.server.adapter.ForwardedHeaderTransformer;
+
+@Configuration
+public class WebConfig {
+
+    @Bean
+    public ForwardedHeaderTransformer forwardedHeaderTransformer() {
+        return new ForwardedHeaderTransformer();
+    }
+}
+
+/**********************************************************
+ * ARQUIVO: ./main/java/net/ddns/adambravo79/nextdns/controller/api/ParentalController.java
+ **********************************************************/
+
+package net.ddns.adambravo79.nextdns.controller.api;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import net.ddns.adambravo79.nextdns.domain.entity.NextDnsConfig;
+import net.ddns.adambravo79.nextdns.domain.repository.NextDnsConfigRepository;
+import net.ddns.adambravo79.nextdns.client.NextDnsClient;
+import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
+
+@RestController
+@RequestMapping("/api/parental")
+@RequiredArgsConstructor
+@Slf4j
+public class ParentalController {
+
+    private final NextDnsClient nextDnsClient;
+    private final NextDnsConfigRepository configRepository;
+
+    /**
+     * Agora o token recebido no Header identifica QUAL usuário está operando.
+     * Para simplicidade inicial, usaremos o e-mail como token ou uma coluna 'api_token' na tabela User.
+     */
+    @PostMapping("/youtube/bloquear")
+    public Mono<String> bloquear(@RequestHeader(value = "X-Api-Email") String email) {
+        log.info("API: Solicitação de bloqueio para o usuário: {}", email);
+
+        return findConfig(email)
+                .flatMap(config -> nextDnsClient.bloquearYoutube(config.getProfileId(), config.getEncryptedApiKey())
+                        .then(Mono.just("YouTube BLOQUEADO com sucesso para " + email)))
+                .onErrorResume(e -> Mono.just("ERRO: " + e.getMessage()));
+    }
+
+    @DeleteMapping("/youtube/liberar")
+    public Mono<String> liberar(@RequestHeader(value = "X-Api-Email") String email) {
+        log.info("API: Solicitação de liberação para o usuário: {}", email);
+
+        return findConfig(email)
+                .flatMap(config -> nextDnsClient.liberarYoutube(config.getProfileId(), config.getEncryptedApiKey())
+                        .then(Mono.just("YouTube LIBERADO com sucesso para " + email)))
+                .onErrorResume(e -> Mono.just("ERRO: " + e.getMessage()));
+    }
+
+    private Mono<NextDnsConfig> findConfig(String email) {
+        return Mono.fromCallable(() -> configRepository.findByUserEmail(email))
+                .flatMap(optional -> optional.map(Mono::just)
+                        .orElseGet(() -> Mono.error(new RuntimeException("Configuração não encontrada para este e-mail"))));
+    }
+}
+
+/**********************************************************
+ * ARQUIVO: ./main/java/net/ddns/adambravo79/nextdns/controller/web/ParentalGuiController.java
+ **********************************************************/
+
+package net.ddns.adambravo79.nextdns.controller.web;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import net.ddns.adambravo79.nextdns.domain.entity.NextDnsConfig;
+import net.ddns.adambravo79.nextdns.domain.entity.User;
+import net.ddns.adambravo79.nextdns.domain.repository.NextDnsConfigRepository;
+import net.ddns.adambravo79.nextdns.domain.repository.UserRepository;
+import net.ddns.adambravo79.nextdns.service.NextDnsService;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.oauth2.core.user.OAuth2User;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
+
+@Controller
+@RequiredArgsConstructor
+@Slf4j
+public class ParentalGuiController {
+
+    private final NextDnsService service;
+    private final NextDnsConfigRepository configRepository;
+    private final UserRepository userRepository;
+
+    // Mapeamento aceitando a raiz e o caminho do proxy
+    @GetMapping(value = { "/", "/gui", "/controle-parental/gui" })
+    public Mono<String> showGui(@AuthenticationPrincipal OAuth2User principal, Model model) {
+        
+        if (principal == null) {
+            // Se não houver usuário, redireciona para o login via prefixo do Apache
+            return Mono.just("redirect:/controle-parental/login");
+        }
+
+        String email = principal.getAttribute("email");
+
+        if (email == null) {
+            log.warn("Usuário logado sem atributo de e-mail.");
+            return Mono.just("redirect:/controle-parental/login");
+        }
+
+        return Mono.fromCallable(() -> configRepository.findByUserEmail(email))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(optionalConfig -> {
+                    if (optionalConfig.isEmpty()) {
+                        model.addAttribute("userEmail", email);
+                        return Mono.just("setup-config");
+                    }
+
+                    NextDnsConfig config = optionalConfig.get();
+                    model.addAttribute("profileId", config.getProfileId());
+                    model.addAttribute("userEmail", email);
+                    return Mono.just("index");
+                });
+    }
+
+    @PostMapping("/gui/bloquear")
+    @ResponseBody
+    public Mono<Void> bloquear(@AuthenticationPrincipal Object principal, ServerWebExchange exchange) {
+        String email = extractEmail(principal);
+        return service.bloquearComLog(exchange, email);
+    }
+
+    @PostMapping("/gui/liberar")
+    @ResponseBody
+    public Mono<Void> liberar(@AuthenticationPrincipal Object principal, ServerWebExchange exchange) {
+        String email = extractEmail(principal);
+        return service.liberarComLog(exchange, email);
+    }
+
+    @PostMapping(value = "/gui/timer", consumes = "application/x-www-form-urlencoded")
+    @ResponseBody
+    public Mono<Void> timer(@AuthenticationPrincipal Object principal, ServerWebExchange exchange) {
+        String email = extractEmail(principal);
+        return exchange.getFormData().flatMap(formData -> {
+            String minutosStr = formData.getFirst("minutos");
+            int minutos = (minutosStr != null) ? Integer.parseInt(minutosStr) : 0;
+            return service.liberarTemporario(minutos, exchange, email);
+        });
+    }
+
+    @PostMapping("/gui/setup")
+    public Mono<String> salvarSetup(@AuthenticationPrincipal Object principal,
+                                    @RequestParam String profileId,
+                                    @RequestParam String apiKey) {
+        String email = extractEmail(principal);
+
+        return Mono.fromCallable(() -> {
+            User user = userRepository.findByEmail(email)
+                    .orElseThrow(() -> new RuntimeException("Usuário não cadastrado: " + email));
+
+            NextDnsConfig config = NextDnsConfig.builder()
+                    .profileId(profileId)
+                    .encryptedApiKey(apiKey)
+                    .user(user)
+                    .build();
+
+            configRepository.save(config);
+            log.info("Configuração NextDNS salva para: {}", email);
+
+            // IMPORTANTE: Redireciona de volta para a GUI usando o prefixo do Apache
+            return "redirect:/controle-parental/gui";
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    private String extractEmail(Object principal) {
+        if (principal instanceof OAuth2User oAuth2User) {
+            return oAuth2User.getAttribute("email");
+        } else if (principal instanceof UserDetails userDetails) {
+            return userDetails.getUsername();
+        }
+        return null;
+    }
+}
+
+/**********************************************************
+ * ARQUIVO: ./main/java/net/ddns/adambravo79/nextdns/domain/entity/NextDnsConfig.java
+ **********************************************************/
+
+package net.ddns.adambravo79.nextdns.domain.entity;
+
+import jakarta.persistence.*;
+import lombok.*;
+
+@Entity
+@Table(name = "nextdns_configs")
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder // Adicionado para facilitar o cadastro inicial de chaves
+public class NextDnsConfig {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private String profileId;
+
+    @Column(nullable = false)
+    private String encryptedApiKey;
+
+    // Vincula esta configuração a um usuário específico
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+}
+
+/**********************************************************
+ * ARQUIVO: ./main/java/net/ddns/adambravo79/nextdns/domain/entity/User.java
+ **********************************************************/
+
+package net.ddns.adambravo79.nextdns.domain.entity;
+
+import jakarta.persistence.*;
+import lombok.*;
+
+import java.util.List;
+
+@Entity
+@Table(name = "users")
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder // Adicionado para facilitar a criação de novos usuários
+public class User {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(unique = true, nullable = false)
+    private String email;
+
+    private String name;
+
+    // Campos para OAuth2 (Google/Yahoo)
+    private String provider;   // ex: "google", "yahoo"
+    private String providerId; // ID único retornado pelo provedor
+
+    // Token para acesso via API (Substitui o antigo TokenValidator)
+    @Column(unique = true)
+    private String apiToken;
+
+    private String role; // ex: "ROLE_USER"
+
+    // Relacionamento com as configurações do NextDNS
+    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    private List<NextDnsConfig> configs;
+}
+
+/**********************************************************
+ * ARQUIVO: ./main/java/net/ddns/adambravo79/nextdns/domain/repository/NextDnsConfigRepository.java
+ **********************************************************/
+
+package net.ddns.adambravo79.nextdns.domain.repository;
+
+import net.ddns.adambravo79.nextdns.domain.entity.NextDnsConfig;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.Optional;
+
+@Repository
+public interface NextDnsConfigRepository extends JpaRepository<NextDnsConfig, Long> {
+    // Aqui usamos o "Double Underscore" ou navegação de propriedade do Spring Data
+    // Ele busca na entidade User (dentro de NextDnsConfig) pelo campo Email
+    Optional<NextDnsConfig> findByUserEmail(String email);
+}
+
+/**********************************************************
+ * ARQUIVO: ./main/java/net/ddns/adambravo79/nextdns/domain/repository/UserRepository.java
+ **********************************************************/
+
+package net.ddns.adambravo79.nextdns.domain.repository;
+
+import net.ddns.adambravo79.nextdns.domain.entity.User;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.Optional;
+
+@Repository
+public interface UserRepository extends JpaRepository<User, Long> {
+    // Busca para validar login ou vincular dados do OAuth2
+    Optional<User> findByEmail(String email);
+    
+    // Busca específica para provedores sociais
+    Optional<User> findByProviderAndProviderId(String provider, String providerId);
+}
+
+/**********************************************************
+ * ARQUIVO: ./main/java/net/ddns/adambravo79/nextdns/security/CustomOAuth2UserService.java
+ **********************************************************/
+
+package net.ddns.adambravo79.nextdns.security;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import net.ddns.adambravo79.nextdns.domain.entity.User;
+import net.ddns.adambravo79.nextdns.domain.repository.UserRepository;
+import org.springframework.security.oauth2.client.userinfo.DefaultReactiveOAuth2UserService;
+import org.springframework.security.oauth2.client.userinfo.OAuth2UserRequest;
+import org.springframework.security.oauth2.client.userinfo.ReactiveOAuth2UserService;
+import org.springframework.security.oauth2.core.user.OAuth2User;
+import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
+
+import java.util.UUID;
+
+@Service
+@Slf4j
+@RequiredArgsConstructor
+public class CustomOAuth2UserService implements ReactiveOAuth2UserService<OAuth2UserRequest, OAuth2User> {
+
+    private final UserRepository userRepository;
+    private final DefaultReactiveOAuth2UserService delegate = new DefaultReactiveOAuth2UserService();
+
+    @Override
+    public Mono<OAuth2User> loadUser(OAuth2UserRequest userRequest) {
+        return delegate.loadUser(userRequest)
+                .flatMap(oAuth2User -> {
+                    String email = oAuth2User.getAttribute("email");
+                    String name = oAuth2User.getAttribute("name");
+                    String provider = userRequest.getClientRegistration().getRegistrationId();
+                    String providerId = oAuth2User.getName(); // ID único do Google/Yahoo
+
+                    return Mono.fromCallable(() -> {
+                        return userRepository.findByEmail(email)
+                                .orElseGet(() -> {
+                                    log.info("Novo usuário detectado via {}: {}. Salvando no SQLite...", provider, email);
+                                    User newUser = User.builder()
+                                            .email(email)
+                                            .name(name)
+                                            .provider(provider)
+                                            .providerId(providerId)
+                                            .apiToken(UUID.randomUUID().toString()) // Gera o token para a API
+                                            .role("ROLE_USER")
+                                            .build();
+                                    return userRepository.save(newUser);
+                                });
+                    }).thenReturn(oAuth2User);
+                });
+    }
+}
+
+/**********************************************************
+ * ARQUIVO: ./main/java/net/ddns/adambravo79/nextdns/security/TokenValidator.java
+ **********************************************************/
+
+package net.ddns.adambravo79.nextdns.security;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+@Slf4j
+@Component
+public class TokenValidator {
+
+    @Value("${APP_SECRET_TOKEN:}")
+    private String validToken;
+
+    public boolean isValid(String token) {
+        if (validToken == null || validToken.isEmpty()) {
+            log.error("APP_SECRET_TOKEN não configurado! O sistema não pode validar requisições.");
+            return false;
+        }
+        
+        boolean isValid = token != null && validToken.equals(token);
+        
+        if (!isValid) {
+            log.warn("Tentativa de acesso com token inválido (recebido: '{}', esperado: '{}')", 
+                token != null ? "***" : "null", "***");
+        }
+        
+        return isValid;
+    }
+}
+
+/**********************************************************
+ * ARQUIVO: ./main/java/net/ddns/adambravo79/nextdns/service/NextDnsService.java
+ **********************************************************/
+
+package net.ddns.adambravo79.nextdns.service;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import net.ddns.adambravo79.nextdns.client.NextDnsClient;
+import net.ddns.adambravo79.nextdns.domain.entity.NextDnsConfig;
+import net.ddns.adambravo79.nextdns.domain.repository.NextDnsConfigRepository;
+import org.springframework.scheduling.TaskScheduler;
+import org.springframework.stereotype.Service;
+import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Mono;
+
+import java.net.InetSocketAddress;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class NextDnsService {
+
+    private final NextDnsClient client;
+    private final NextDnsConfigRepository configRepository;
+    private final TaskScheduler taskScheduler;
+    
+    // Agora a chave do mapa usa o email para evitar conflitos entre usuários
+    private final ConcurrentHashMap<String, ScheduledFuture<?>> activeTimers = new ConcurrentHashMap<>();
+
+    private Mono<NextDnsConfig> getConfig(String email) {
+        return Mono.fromCallable(() -> configRepository.findByUserEmail(email))
+                .flatMap(opt -> opt.map(Mono::just)
+                        .orElseGet(() -> Mono.error(new RuntimeException("Configuração NextDNS não encontrada para: " + email))));
+    }
+
+    private String getClientIp(ServerWebExchange exchange) {
+        String xForwardedFor = exchange.getRequest().getHeaders().getFirst("X-Forwarded-For");
+        if (xForwardedFor != null && !xForwardedFor.isEmpty()) {
+            return xForwardedFor.split(",")[0].trim();
+        }
+        InetSocketAddress remoteAddress = exchange.getRequest().getRemoteAddress();
+        return (remoteAddress != null && remoteAddress.getAddress() != null) 
+                ? remoteAddress.getAddress().getHostAddress() : "IP-DESCONHECIDO";
+    }
+
+    public Mono<Void> bloquearComLog(ServerWebExchange exchange, String email) {
+        String ip = getClientIp(exchange);
+        log.info("[{}] - Usuário {} solicitou BLOQUEIO às {}", ip, email, LocalDateTime.now());
+        
+        return getConfig(email)
+                .flatMap(config -> client.bloquearYoutube(config.getProfileId(), config.getEncryptedApiKey()));
+    }
+
+    public Mono<Void> liberarComLog(ServerWebExchange exchange, String email) {
+        String ip = getClientIp(exchange);
+        log.info("[{}] - Usuário {} solicitou LIBERAÇÃO às {}", ip, email, LocalDateTime.now());
+        
+        return getConfig(email)
+                .flatMap(config -> client.liberarYoutube(config.getProfileId(), config.getEncryptedApiKey()));
+    }
+
+    public Mono<Void> liberarTemporario(int minutos, ServerWebExchange exchange, String email) {
+        String ip = getClientIp(exchange);
+        // A chave de sessão agora é baseada no e-mail único do usuário
+        String sessionKey = email + "|" + ip;
+        
+        log.info("[{}] - ACESSO TEMPORÁRIO para {} iniciado por {} min", ip, email, minutos);
+
+        if (activeTimers.containsKey(sessionKey)) {
+            ScheduledFuture<?> existingTimer = activeTimers.remove(sessionKey);
+            if (existingTimer != null) {
+                existingTimer.cancel(false);
+                log.info("[{}] - Timer anterior de {} cancelado", ip, email);
+            }
+        }
+
+        return getConfig(email).flatMap(config -> 
+            client.liberarYoutube(config.getProfileId(), config.getEncryptedApiKey())
+                .doOnSuccess(v -> log.info("[{}] - YouTube liberado para {}", ip, email))
+                .then(Mono.fromRunnable(() -> {
+                    ScheduledFuture<?> future = taskScheduler.schedule(() -> {
+                        log.info("[{}] - Timer de {} min finalizado para {}. Bloqueando...", ip, minutos, email);
+                        
+                        client.bloquearYoutube(config.getProfileId(), config.getEncryptedApiKey())
+                            .doOnSuccess(v -> {
+                                log.info("[{}] - Bloqueio automático concluído para {}", ip, email);
+                                activeTimers.remove(sessionKey);
+                            })
+                            .subscribe();
+                    }, Instant.now().plus(Duration.ofMinutes(minutos)));
+                    
+                    activeTimers.put(sessionKey, future);
+                }))
+        );
+    }
+}
+
+/**********************************************************
+ * ARQUIVO: ./main/resources/application.yml
+ **********************************************************/
+
+spring:
+  main:
+    allow-bean-definition-overriding: true
+  thymeleaf:
+    cache: false
+  datasource:
+    url: jdbc:sqlite:/app/data/nextdns_data.db
+    driver-class-name: org.sqlite.JDBC
+  jpa:
+    database-platform: org.hibernate.community.dialect.SQLiteDialect
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_ID}
+            client-secret: ${GOOGLE_SECRET}
+            redirect-uri: "{baseUrl}/login/oauth2/code/google"
+            scope:
+              - email
+              - profile
+          yahoo:
+            client-id: ${YAHOO_ID}
+            client-secret: ${YAHOO_SECRET}
+            provider: yahoo
+            authorization-grant-type: authorization_code
+            redirect-uri: "{baseUrl}/login/oauth2/code/yahoo"
+            scope:
+              - sdpp-w
+              - email
+              - profile
+        provider:
+          yahoo:
+            authorization-uri: https://api.login.yahoo.com/oauth2/config
+            token-uri: https://api.login.yahoo.com/oauth2/get_token
+            user-info-uri: https://api.login.yahoo.com/openid/v1/userinfo
+            jwk-set-uri: https://api.login.yahoo.com/openid/v1/certs
+            user-name-attribute: sub
+
+server:
+  port: 8080
+  # Mudança: Usar NATIVE para o Spring ler os headers X-Forwarded do Apache corretamente
+  forward-headers-strategy: native
+
+nextdns:
+  api:
+    key: ${NEXTDNS_API_KEY}
+    profile-id: ${NEXTDNS_PROFILE_ID}
+  base-url: https://api.nextdns.io
+
+logging:
+  level:
+    org.springframework.web: DEBUG
+    org.springframework.security: DEBUG  
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Correção: Sintaxe YAML correta para lista ou string separada por vírgula
+        include: "health,info"
+  endpoint:
+    health:
+      show-details: always
+
+/**********************************************************
+ * ARQUIVO: ./main/resources/templates/index.html
+ **********************************************************/
+
+<!DOCTYPE html>
+<html lang="pt-br" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Controle NextDNS - Painel</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #121212; color: white; padding-top: 50px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .card { background-color: #1e1e1e; border: 1px solid #333; border-radius: 15px; }
+        .btn-timer { background-color: #6f42c1; color: white; transition: 0.3s; }
+        .btn-timer:hover { background-color: #8559da; transform: scale(1.02); }
+        .btn-lg { font-weight: bold; border-radius: 10px; }
+        .alert-floating { position: fixed; top: 20px; right: 20px; z-index: 1000; min-width: 250px; display: none; }
+        .user-badge { font-size: 0.8rem; color: #888; margin-top: 10px; }
+        #timerDisplay { display: none; margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+
+    <div id="statusAlert" class="alert alert-floating shadow-lg"></div>
+
+    <div class="container text-center" style="max-width: 450px;">
+        
+        <div class="card p-4 shadow">
+            <h2 class="mb-2">🎮 NextDNS Control</h2>
+            <div class="user-badge" th:text="'Logado como: ' + ${userEmail}"></div>
+            <hr class="my-4 border-secondary">
+
+            <div id="timerDisplay" class="alert alert-info py-2">
+                <strong>⏱️ TEMPO RESTANTE</strong><br>
+                <span id="countdown" class="fs-4 fw-bold">00:00</span>
+            </div>
+
+            <div class="d-grid gap-3">
+                <button onclick="executarAcao('/gui/bloquear', 'YouTube BLOQUEADO!')" class="btn btn-danger btn-lg py-3">
+                    🔒 Bloquear Agora
+                </button>
+
+                <button onclick="executarAcao('/gui/liberar', 'YouTube LIBERADO!')" class="btn btn-success btn-lg py-3">
+                    🔓 Liberar Geral
+                </button>
+
+                <div class="mt-4">
+                    <h6 class="text-secondary text-start">⏱️ ACESSO TEMPORÁRIO</h6>
+                    <div class="row g-2">
+                        <div class="col-8">
+                            <select id="minutosSelect" class="form-select bg-dark text-white border-secondary h-100">
+                                <option value="1">1 minuto (Teste)</option>
+                                <option value="15">15 minutos</option>
+                                <option value="30">30 minutos</option>
+                                <option value="60">1 hora</option>
+                                <option value="120">2 horas</option>
+                            </select>
+                        </div>
+                        <div class="col-4">
+                            <button onclick="iniciarTimer()" class="btn btn-timer w-100 py-2">🚀 Iniciar</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <a href="/logout" class="btn btn-link btn-sm text-secondary mt-4">Sair da Conta</a>
+        </div>
+    </div>
+
+    <script>
+        // Função para executar ações sem recarregar a página (SPA Style)
+        async function executarAcao(endpoint, mensagemSucesso) {
+            try {
+                const response = await fetch(endpoint, { method: 'POST' });
+                if (response.ok) {
+                    mostrarAlerta(mensagemSucesso, "success");
+                    if (endpoint.includes('bloquear')) pararTimerVisual();
+                } else {
+                    mostrarAlerta("Erro ao processar comando", "danger");
+                }
+            } catch (err) {
+                mostrarAlerta("Falha na conexão com o servidor", "danger");
+            }
+        }
+
+        // Função para iniciar o timer via API
+        async function iniciarTimer() {
+            const mins = document.getElementById('minutosSelect').value;
+            const formData = new URLSearchParams();
+            formData.append('minutos', mins);
+
+            try {
+                const response = await fetch('/gui/timer', {
+                    method: 'POST',
+                    body: formData,
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                });
+
+                if (response.ok) {
+                    mostrarAlerta("Timer iniciado!", "info");
+                    começarCronometroVisual(parseInt(mins));
+                }
+            } catch (err) {
+                mostrarAlerta("Erro ao iniciar timer", "danger");
+            }
+        }
+
+        // Lógica do Cronômetro Visual
+        let intervalId = null;
+        function começarCronometroVisual(minutos) {
+            pararTimerVisual();
+            let totalSegundos = minutos * 60;
+            const display = document.getElementById('timerDisplay');
+            const countdown = document.getElementById('countdown');
+            
+            display.style.display = 'block';
+
+            intervalId = setInterval(() => {
+                let m = Math.floor(totalSegundos / 60);
+                let s = totalSegundos % 60;
+                countdown.innerText = `${m}:${s.toString().padStart(2, '0')}`;
+
+                if (totalSegundos-- <= 0) {
+                    pararTimerVisual();
+                    mostrarAlerta("Tempo esgotado! Bloqueando...", "warning");
+                }
+            }, 1000);
+        }
+
+        function pararTimerVisual() {
+            if (intervalId) clearInterval(intervalId);
+            document.getElementById('timerDisplay').style.display = 'none';
+        }
+
+        // Sistema de Alerta Flutuante
+        function mostrarAlerta(msg, tipo) {
+            const alert = document.getElementById('statusAlert');
+            alert.className = `alert alert-floating shadow-lg alert-${tipo}`;
+            alert.innerHTML = msg;
+            alert.style.display = 'block';
+            setTimeout(() => { alert.style.display = 'none'; }, 3500);
+        }
+    </script>
+</body>
+</html>
+
+/**********************************************************
+ * ARQUIVO: ./main/resources/templates/setup-config.html
+ **********************************************************/
+
+<!DOCTYPE html>
+<html lang="pt-br" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>Configurar NextDNS</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-dark text-white p-5">
+    <div class="container" style="max-width: 500px;">
+        <div class="card bg-secondary p-4">
+            <h3>Bem-vindo, <span th:text="${userEmail}"></span></h3>
+            <p>Configure suas chaves do NextDNS para começar:</p>
+           <form th:action="@{/gui/setup}" method="post">
+                <div class="mb-3">
+                    <label>ID do Perfil (Profile ID):</label>
+                    <input type="text" name="profileId" class="form-control" required>
+                </div>
+                <div class="mb-3">
+                    <label>API Key:</label>
+                    <input type="password" name="apiKey" class="form-control" required>
+                </div>
+                <button type="submit" class="btn btn-primary w-100">Salvar e Acessar Painel</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>

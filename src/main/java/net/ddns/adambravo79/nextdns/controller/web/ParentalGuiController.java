@@ -2,56 +2,100 @@ package net.ddns.adambravo79.nextdns.controller.web;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.ddns.adambravo79.nextdns.domain.entity.NextDnsConfig;
+import net.ddns.adambravo79.nextdns.domain.entity.User;
+import net.ddns.adambravo79.nextdns.domain.repository.NextDnsConfigRepository;
+import net.ddns.adambravo79.nextdns.domain.repository.UserRepository;
 import net.ddns.adambravo79.nextdns.service.NextDnsService;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.stereotype.Controller;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @Controller
-@RequestMapping("/gui")
 @RequiredArgsConstructor
 @Slf4j
 public class ParentalGuiController {
 
-    public static final String TOKEN = "token";
     private final NextDnsService service;
+    private final NextDnsConfigRepository configRepository;
+    private final UserRepository userRepository;
 
-    // Ajustado para aceitar o token e retornar Mono, conforme solicitado
-    @GetMapping
-    public Mono<String> showGui(@RequestParam(name = TOKEN, required = false) String token) {
-        // A lógica de validação do token já está no SecurityConfig,
-        // então aqui apenas retornamos o nome do modelo.
-        return Mono.just("index");
+    @GetMapping(value = { "/", "/gui/**" })
+    public Mono<String> showGui(@AuthenticationPrincipal OAuth2User principal, Model model) {
+        if (principal == null) return Mono.just("redirect:/controle-parental/login");
+        
+        String email = principal.getAttribute("email");
+        if (email == null) return Mono.just("redirect:/controle-parental/login");
+
+        return Mono.fromCallable(() -> configRepository.findByUserEmail(email))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(optionalConfig -> {
+                    if (optionalConfig.isEmpty()) {
+                        model.addAttribute("userEmail", email);
+                        return Mono.just("setup-config");
+                    }
+                    NextDnsConfig config = optionalConfig.get();
+                    model.addAttribute("profileId", config.getProfileId());
+                    model.addAttribute("userEmail", email);
+                    return Mono.just("index");
+                });
     }
 
-    @PostMapping("/bloquear")
-    public Mono<String> bloquear(ServerWebExchange exchange) {
-        // Captura o _token_ que veio na requisição atual para manter o acesso no redirect
-        String token = exchange.getRequest().getQueryParams().getFirst(TOKEN);
-
-        return service.bloquearComLog(exchange)
-                .thenReturn("redirect:/gui?status=bloqueado&token=" + (token != null ? token : ""));
+    @PostMapping("/gui/bloquear")
+    @ResponseBody
+    public Mono<Void> bloquear(@AuthenticationPrincipal Object principal, ServerWebExchange exchange) {
+        return service.bloquearComLog(exchange, extractEmail(principal));
     }
 
-    @PostMapping("/liberar")
-    public Mono<String> liberar(ServerWebExchange exchange) {
-        String token = exchange.getRequest().getQueryParams().getFirst(TOKEN);
-
-        return service.liberarComLog(exchange)
-                .thenReturn("redirect:/gui?status=liberado&token=" + (token != null ? token : ""));
+    @PostMapping("/gui/liberar")
+    @ResponseBody
+    public Mono<Void> liberar(@AuthenticationPrincipal Object principal, ServerWebExchange exchange) {
+        return service.liberarComLog(exchange, extractEmail(principal));
     }
 
-    @GetMapping("/timer") // Agora é GET
-    public Mono<String> timer(@RequestParam("minutos") int minutos, ServerWebExchange exchange) {
-        String token = exchange.getRequest().getQueryParams().getFirst(TOKEN);
+    @PostMapping(value = "/gui/timer", consumes = "application/x-www-form-urlencoded")
+    @ResponseBody
+    public Mono<Void> timer(@AuthenticationPrincipal Object principal, ServerWebExchange exchange) {
+        String email = extractEmail(principal);
+        return exchange.getFormData().flatMap(formData -> {
+            String minutosStr = formData.getFirst("minutos");
+            int minutos = (minutosStr != null) ? Integer.parseInt(minutosStr) : 0;
+            return service.liberarTemporario(minutos, exchange, email);
+        });
+    }
 
-        log.info("Recebido pedido de timer: {} minutos", minutos);
-        service.liberarTemporario(minutos, exchange);
+    @PostMapping("/gui/setup")
+    public Mono<String> salvarSetup(@AuthenticationPrincipal Object principal, ServerWebExchange exchange) {
+        String email = extractEmail(principal);
+        return exchange.getFormData().flatMap(formData -> {
+            String profileId = formData.getFirst("profileId");
+            String apiKey = formData.getFirst("apiKey");
 
-        return Mono.just("redirect:/gui?status=timer_iniciado&minutos=" + minutos + "&token=" + (token != null ? token : ""));
+            return Mono.fromCallable(() -> {
+                User user = userRepository.findByEmail(email)
+                        .orElseThrow(() -> new RuntimeException("Usuário não cadastrado: " + email));
+
+                NextDnsConfig config = NextDnsConfig.builder()
+                        .profileId(profileId)
+                        .encryptedApiKey(apiKey)
+                        .user(user)
+                        .build();
+
+                configRepository.save(config);
+                return "redirect:/gui";
+            }).subscribeOn(Schedulers.boundedElastic());
+        });
+    }
+
+    private String extractEmail(Object principal) {
+        if (principal instanceof OAuth2User oAuth2User) {
+            return oAuth2User.getAttribute("email");
+        }
+        return null;
     }
 }

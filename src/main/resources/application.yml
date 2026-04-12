@@ -1,26 +1,73 @@
----
-nextdns:
-  api:
-    # O Spring tenta ler a variável do sistema, se não existir, fica vazio (seguro)
-    key: ${NEXTDNS_API_KEY}
-    profile-id: ${NEXTDNS_PROFILE_ID}
-  base-url: https://api.nextdns.io
-
-auth:
-  # Aqui usamos o formato: ${VARIAVEL:VALOR_PADRAO}
-  # Se você não definir a variável no Docker, ele usa o G25K03g01@
-  secret-token: ${APP_SECRET_TOKEN}
-
-#logging:
-#  level:
-#    org.springframework.security: DEBUG
-#    org.springframework.web.server.adapter.HttpWebHandlerAdapter: TRACE
-
 spring:
   main:
     allow-bean-definition-overriding: true
-
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:sqlite:/app/data/nextdns_data.db}
+    driver-class-name: org.sqlite.JDBC
+  jpa:
+    database-platform: org.hibernate.community.dialect.SQLiteDialect
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_ID}
+            client-secret: ${GOOGLE_SECRET}
+            authorization-grant-type: authorization_code
+            redirect-uri: "https://adambravo79.ddns.net/controle-parental/login/oauth2/code/google"
+            scope: [email, profile]
+          yahoo:
+            client-id: ${YAHOO_ID}
+            client-secret: ${YAHOO_SECRET}
+            provider: yahoo
+            authorization-grant-type: authorization_code
+            redirect-uri: "https://adambravo79.ddns.net/controle-parental/login/oauth2/code/yahoo"
+            scope: [email, profile]
+        provider:
+          yahoo:
+            authorization-uri: https://api.login.yahoo.com/oauth2/request_auth
+            token-uri: https://api.login.yahoo.com/oauth2/get_token
+            user-info-uri: https://api.login.yahoo.com/openid/v1/userinfo
+            jwk-set-uri: https://api.login.yahoo.com/openid/v1/certs
+            user-name-attribute: sub
+  webflux:
+    base-path: /controle-parental
+  threads:
+    virtual: 
+      enabled: true
+  kafka:
+    bootstrap-servers: kafka-kraft:29092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    properties:
+      spring.json.add.type.headers: false
+  environment:
+    KAFKA_HEAP_OPTS: "-Xmx512M -Xms512M" #
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 server:
-  servlet:
-    context-path: /nextdnsapp
-  forward-headers-strategy: framework
+  port: 8080
+  forward-headers-strategy: framework # Alterado para framework
+  reactive:
+    session:
+      cookie:
+        path: /controle-parental
+        same-site: lax
+        secure: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health,info"
+
+logging:
+  level:
+    org.springframework.security: INFO
+    org.springframework.web: INFO

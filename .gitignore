@@ -45,3 +45,5 @@ bin/
 nextdns.sh
 .env
 dumpcode.txt
+nextdns.sh
+.gitignore
