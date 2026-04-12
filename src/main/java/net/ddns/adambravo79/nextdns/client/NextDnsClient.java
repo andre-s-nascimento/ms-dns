@@ -17,6 +17,8 @@ public class NextDnsClient {
     private final WebClient webClient;
 
     public NextDnsClient(WebClient.Builder builder,
+                         @Value("${nextdns.api.key:#{null}}") String apiKey,
+                         @Value("${nextdns.profile-id:#{null}}") String profileId,
                          @Value("${nextdns.base-url:https://api.nextdns.io}") String baseUrl) {
         
         this.webClient = builder
